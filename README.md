@@ -1,6 +1,6 @@
 # td-observability
 
-This project sets up **Prometheus** and **Grafana** using Docker Compose to monitor multiple microservices, such as `nikit-server`. It’s a ready-to-use solution for development, testing, or observability environments. TeamDroid Observability.
+This project sets up **Prometheus + Grafana** and **ELK Stack (Elasticsearch, Logstash, Kibana)** using Docker Compose to monitor and collect logs from microservices such as `nikit-server`. It’s a ready-to-use solution for development, testing, or observability environments. TeamDroid Observability.
 
 ---
 
@@ -8,131 +8,234 @@ This project sets up **Prometheus** and **Grafana** using Docker Compose to moni
 
 ```
 td-observability/
-├── docker-compose.yml                # Defines Grafana and Prometheus services
-├── prometheus/
-│   └── prometheus.yml                # Scrape configuration for Prometheus
-├── grafana/
-│   └── datasources/
-│       └── datasource.yml            # Preconfigured datasource for Grafana
-├── .env                              # Optional environment variables
-└── README.md                         # Documentation
+├── elk/
+│   ├── logstash/
+│   │   └── pipeline/
+│   │       └── logstash.conf         # Logstash pipeline config
+│   └── docker-compose.yml            # ELK stack orchestration
+├── prometheus-grafana/
+│   ├── grafana/
+│   │   └── datasources/
+│   │       └── datasource.yml        # Preconfigured datasource for Grafana
+│   ├── prometheus/
+│   │   └── prometheus.yml            # Scrape configuration for Prometheus
+│   └── docker-compose.yml            # Prometheus + Grafana orchestration
+├── start.sh                          # Launches full observability stack
+├── stop.sh                           # Stops the stack
+├── .gitignore
+├── LICENSE
+└── README.md
 ```
 
 ---
 
-## 🚀 How to launch the solution
+## 🚀 How to launch the stack
 
 ### 1. Make sure the `td-network` exists
 
-If it doesn’t exist, create it with:
+Create it if it doesn't exist:
 
 ```bash
 docker network create td-network
 ```
 
-### 2. Start the containers
+### 2. Start the full stack (ELK + Prometheus + Grafana)
 
 ```bash
-docker compose up -d
+./start.sh
 ```
 
-This command will download the images if not available locally and launch `prometheus` and `grafana` in detached mode (`-d`).
+This launches:
+- ELK stack (Elasticsearch, Logstash, Kibana)
+- Prometheus & Grafana
+
+> Ensure Docker Compose V2 is available in your environment.
 
 ---
 
 ## 🧯 How to stop the containers
 
 ```bash
-docker compose down
+./stop.sh
 ```
 
-This stops and removes the containers. It does not affect volumes or persistent configurations (like saved Grafana dashboards).
+This stops both `elk` and `prometheus-grafana` containers.
 
 ---
 
-## 🔄 How to restart the containers
+## 📊 Access the observability tools
 
-If you've made changes to `.env` or `docker-compose.yml`:
-
-```bash
-docker compose down
-docker compose up --build -d
-```
-
-This ensures new values are applied and rebuilds the containers if needed.
+| Tool         | URL                  | Default Credentials       |
+|--------------|----------------------|---------------------------|
+| Prometheus   | http://localhost:9090| N/A                       |
+| Grafana      | http://localhost:3000| admin / admin             |
+| Kibana       | http://localhost:5601| No auth (by default)      |
 
 ---
 
-## 📊 Access to tools
-
-- **Prometheus**: http://localhost:9090
-- **Grafana**: http://localhost:3000  
-  - Username: `admin`  
-  - Password: `admin` (you can change it after the first login, e.g., to `abc123..`)
-
----
-
-## 🔎 Basic usage guide
+## 🔎 Usage Guide
 
 ### 🔹 Prometheus
 
-- Visit [http://localhost:9090/targets](http://localhost:9090/targets) to check which targets are being scraped.
-- Try queries in the **Graph** tab, for example:
+- Visit [http://localhost:9090/targets](http://localhost:9090/targets) to verify targets.
+- Run queries like:
   ```text
   http_server_requests_seconds_count
   ```
-- Spring Boot metrics are exposed at `/actuator/prometheus` for each microservice.
+- Spring Boot services must expose `/actuator/prometheus`.
 
 ### 🔹 Grafana
 
-- Once logged in, you'll see a preconfigured Prometheus datasource.
+- Preconfigured Prometheus datasource is included.
 - To import a dashboard:
   1. Go to **Dashboards > New > Import**
-  2. Under “Import via grafana.com”, enter ID: `11378`
-  3. Click “Load” and select the Prometheus datasource
-  4. Click “Import”
+  2. Enter ID `11378` (Spring Boot Micrometer)
+  3. Select the Prometheus datasource and click "Import"
 
-> Dashboard ID **11378** is specifically designed for **Spring Boot with micrometer** and provides ready-to-use visualizations.
+### 🔹 Kibana
+
+- Access [http://localhost:5601](http://localhost:5601)
+- Go to **Discover > Create index pattern**
+- Use: `nikit-logs-*` and select `@timestamp` as time field
+- Explore logs by fields like `level`, `controller`, `requestId`, `stage`, etc.
 
 ---
 
-## 🧪 Requirements for monitored microservices
+## 📥 Sending logs to Logstash
 
-Each Spring Boot microservice must:
+Each microservice (e.g. `nikit-server`) must:
 
-- Expose metrics at `/actuator/prometheus`
-- Include these properties:
+- Be on `td-network`
+- Send logs via TCP to Logstash at `logstash:5000`
+- Include a `logback-spring.xml` like:
 
-```properties
-management.endpoints.web.exposure.include=prometheus
-management.endpoint.prometheus.enabled=true
+```xml
+<appender name="LOGSTASH" class="net.logstash.logback.appender.LogstashTcpSocketAppender">
+    <destination>logstash:5000</destination>
+    <encoder class="net.logstash.logback.encoder.LogstashEncoder" />
+</appender>
+
+<root level="INFO">
+    <appender-ref ref="LOGSTASH"/>
+</root>
 ```
 
-- Be attached to the `td-network` Docker network
-- Be listed as a `target` in `prometheus/prometheus.yml`
+> Ensure `logback-spring.xml` is located under `src/main/resources/`.
 
 ---
 
-## 🛠️ Customization
+## 🧪 How to test end-to-end
 
-You can edit `prometheus/prometheus.yml` to add more jobs and targets in the following format:
+1. Make sure the stack is running:
+   ```bash
+   docker ps
+   ```
 
-```yaml
-scrape_configs:
-  - job_name: 'my-microservice'
-    metrics_path: '/actuator/prometheus'
-    static_configs:
-      - targets: ['service-name:port']
+2. Send a request to a monitored microservice (e.g., `nikit-server`):
+   ```bash
+   curl http://localhost:8080/api/v1/knowledge
+   ```
+
+3. Go to **Kibana → Discover**, select `nikit-logs-*` and inspect the logs.
+4. Go to **Prometheus → Targets**, confirm that your microservice is scraped.
+5. Go to **Grafana → Dashboards**, and explore imported metrics.
+
+---
+
+## ✅ Recommendations
+
+For best results in local/dev environments:
+
+- Enable structured logs with `LogstashEncoder`
+- Log objects (not strings) to allow field-level observability
+- Use `codec => json_lines` in `logstash.conf`
+- Always restart Logstash after modifying `logstash.conf`:
+
+```bash
+docker restart elk-logstash-1
 ```
 
 ---
 
-## ✅ Recommendation
+## 🔐 Production tips
 
-Use this stack as a base for observability in local or integration environments. For production, consider:
-
-- Prometheus alerting
-- Backup and dashboard persistence in Grafana
-- Securing access with proper credentials and restrictions
+- Configure user/password in Grafana and Kibana
+- Persist Grafana dashboards in volumes
+- Use Elasticsearch authentication and TLS in production
+- Add alerting in Prometheus
+- Backup dashboards and config in source control
 
 ---
+
+## 🐳 Useful Docker Commands
+
+### 🔹 Launch individual stacks
+
+**Start only Prometheus + Grafana:**
+```bash
+cd prometheus-grafana
+docker compose up -d
+```
+
+**Start only ELK stack:**
+```bash
+cd elk
+docker compose up -d
+```
+
+---
+
+### ♻️ Restart after configuration changes
+
+**Restart Logstash (after changing `logstash.conf`):**
+```bash
+docker restart elk-logstash-1
+```
+
+**Restart Prometheus (after editing `prometheus.yml`):**
+```bash
+docker restart prometheus-grafana-prometheus-1
+```
+
+**Restart Grafana (after changing dashboards or datasources):**
+```bash
+docker restart prometheus-grafana-grafana-1
+```
+
+---
+
+### 🧯 Stop and clean up
+
+**Stop all containers from both stacks:**
+```bash
+./stop.sh
+```
+
+**Remove containers (from within a subdirectory):**
+```bash
+docker compose down
+```
+
+---
+
+### 🔍 Troubleshooting
+
+**Check logs of Logstash:**
+```bash
+docker logs -f elk-logstash-1
+```
+
+**Check logs of a microservice (e.g., nikit-server):**
+```bash
+docker logs -f nikit-server
+```
+
+**Check containers attached to `td-network`:**
+```bash
+docker network inspect td-network
+```
+
+**Execute a shell in a container:**
+```bash
+docker exec -it elk-logstash-1 /bin/bash
+```
